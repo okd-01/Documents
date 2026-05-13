@@ -3,19 +3,23 @@
 <project_name>Emoticon Maker - AI 이모티콘 생성 서비스</project_name>
 
 <overview>
-사진에서 카카오 이모티콘 24종 세트를 자동 생성하는 서버리스 웹 서비스. 사용자가 사진을 업로드(최대 3장)하면 AI가 다양한 스타일(지브리풍, 병맛, 미니멀, 실사화 등)을 제안하고, 선택한 스타일로 베이스 캐릭터를 생성한 후 24개 감정/상황 이모티콘을 자동 생성한다. 완성된 세트는 미리보기 페이지에서 확인하고 ZIP으로 다운로드할 수 있다.
+사진에서 카카오 이모티콘 24종 세트를 자동 생성하는 서버리스 웹 서비스. 사용자가 사진을 업로드 또는 PC 카메라로 직접 촬영(최대 3장)하면 AI가 다양한 스타일(지브리풍, 병맛, 미니멀, 실사화 등)을 제안하고, 선택한 스타일로 베이스 캐릭터를 생성한 후 24개 감정/상황 이모티콘을 자동 생성한다. 완성된 세트는 미리보기 페이지에서 확인하고 ZIP으로 다운로드할 수 있다.
 
 사진의 대상은 사람뿐 아니라 고양이, 강아지 등 동물도 지원한다. AI가 자동으로 대상(subject)을 인식하여 동일 종(species)의 캐릭터를 생성한다.
 
 모든 AI 기능은 Google Gemini API를 통해 브라우저에서 직접 호출한다. 별도 백엔드 서버 없이 GitHub Pages에서 정적 호스팅되며, 사용자의 Gemini API 키는 브라우저 세션에만 보관하고 서버로 전송하지 않는다. 생성된 이미지는 IndexedDB에 캐시하여 페이지 새로고침에도 유지된다.
 
-CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 직접 수행한다. API 키는 sessionStorage에만 저장하고, 탭/브라우저 종료 시 자동 삭제된다. 이미지 데이터는 IndexedDB에 Blob으로 저장하며, localStorage는 사용하지 않는다 (용량 제한 5MB).
+API 키는 빌드/배포 시점에 `GOOGLE_API_KEY` 환경변수로부터 주입된 기본값을 사용할 수 있다. 환경변수 기반 기본 키가 존재하면 Step 1을 자동 통과하고, 사용자는 헤더의 "키 변경" 버튼으로 언제든 자기 키로 덮어쓸 수 있다.
+
+CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 직접 수행한다. 사용자가 직접 입력한 API 키는 sessionStorage에만 저장하고, 탭/브라우저 종료 시 자동 삭제된다. 이미지 데이터는 IndexedDB에 Blob으로 저장하며, localStorage는 사용하지 않는다 (용량 제한 5MB).
 </overview>
 
 <scope_boundaries>
   <in_scope>
     - Gemini API 키 입력 및 세션 관리
+    - 환경변수(GOOGLE_API_KEY) 기반 기본 API 키 자동 주입 + Step 1 자동 통과
     - 사진 업로드 (드래그앤드롭 + 파일 선택, 최대 3장)
+    - PC 카메라(getUserMedia) 직접 촬영 및 캡처 (최대 3장에 합산)
     - 사람 및 동물(고양이, 강아지 등) 사진 지원
     - AI 스타일 제안 (6종 프리셋 + AI 추천 스타일 + 직접 입력 탭)
     - 베이스 캐릭터 생성 및 재생성 (자동 재시도 포함)
@@ -88,34 +92,58 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
     - 모던 브라우저 (Chrome 90+, Safari 15+, Firefox 90+)
     - OffscreenCanvas API 지원 (시트 분할용)
     - IndexedDB 지원 (모든 모던 브라우저)
-    - Google Gemini API 키 (사용자 각자 발급)
+    - getUserMedia(MediaDevices) API 지원 (PC 카메라 직접 촬영용) — HTTPS 또는 localhost 컨텍스트 필수
+    - Google Gemini API 키 — 환경변수(GOOGLE_API_KEY) 기본 주입 또는 사용자 런타임 입력
   </environment_setup>
 </prerequisites>
 
 <environment_variables>
   <variable>
-    <name>GEMINI_API_KEY</name>
-    <description>사용자가 런타임에 입력하는 Google Gemini API 키. 코드에 하드코딩하지 않음.</description>
-    <required>true</required>
-    <note>sessionStorage에만 보관. 서버 전송 없음. 탭 종료 시 삭제.</note>
+    <name>GOOGLE_API_KEY</name>
+    <description>기본 Google Gemini API 키. 빌드/배포 시점에 환경변수로부터 정적 사이트에 주입되어 별도 입력 없이 사용 가능한 기본 키 역할을 한다.</description>
+    <required>false</required>
+    <note>
+      - 환경변수가 존재하면 정적 사이트에 주입된 `config.js` 파일이 생성되어 `window.GOOGLE_API_KEY` 전역값을 셋팅한다. `config.js`는 git 추적에서 제외(.gitignore)되며 절대 커밋되지 않는다.
+      - 주입 방식 두 가지 모두 지원:
+        1) 로컬/수동 배포: 개발자가 `config.js`를 생성 (`window.GOOGLE_API_KEY = "..."`)
+        2) GitHub Actions 등 CI/CD: 환경변수 GOOGLE_API_KEY를 읽어 `config.js`를 동적으로 생성하는 배포 스텝 포함
+      - 사용자는 헤더의 "키 변경" 버튼으로 언제든 자기 키로 덮어쓸 수 있으며, override한 키는 기존 정책대로 sessionStorage에만 보관된다.
+      - `config.js`가 없거나 `window.GOOGLE_API_KEY`가 비어있으면 기존 Step 1 입력 화면이 정상적으로 표시된다.
+      - CRITICAL: 환경변수 기본 키도 결국 정적 자바스크립트로 노출되므로, 운영 시 사용량 제한·도메인 제한이 걸린 키만 사용한다.
+    </note>
+  </variable>
+  <variable>
+    <name>GEMINI_API_KEY (legacy alias)</name>
+    <description>이전 명세 호환을 위한 별칭. 신규 코드에서는 GOOGLE_API_KEY로 통일한다.</description>
+    <required>false</required>
+    <note>코드 내부에서는 GOOGLE_API_KEY를 단일 진실의 원천으로 사용한다.</note>
   </variable>
 </environment_variables>
 
 <file_structure>
 /                                   # GitHub Pages 루트
 ├── index.html                     # HTML 구조 + Tailwind 설정 + 메타 태그 (~250줄)
-├── style.css                      # 커스텀 CSS 스타일 (~272줄)
-├── app.js                         # 전체 앱 로직 (~1499줄)
+├── style.css                      # 커스텀 CSS 스타일 (~280줄, 카메라 UI 포함)
+├── app.js                         # 전체 앱 로직 (~1600줄, 카메라 캡처 포함)
+├── config.js                      # (선택, gitignored) `window.GOOGLE_API_KEY = "..."` 정적 주입 파일
+├── config.example.js              # 위 파일 템플릿 (커밋됨, 빈 키)
+├── .gitignore                     # config.js 제외 규칙
 ├── README.md                      # 프로젝트 설명
 └── LICENSE                        # Apache 2.0 + Commons Clause 라이선스
 </file_structure>
 
 <core_data_entities>
   <session_state>
-    - apiKey: string (sessionStorage, 암호화 없음 — 세션 한정)
+    - apiKey: string (런타임 메모리 — 우선순위: sessionStorage 사용자 키 → window.GOOGLE_API_KEY env 기본 키)
+    - apiKeySource: enum (env, user) — 현재 활성 키의 출처. 헤더 뱃지 표시에 사용.
     - ai: GoogleGenAI 인스턴스
     - currentStep: enum (api_key, upload, style, base_review, emoticon_list, generating, complete)
-    - uploadedPhotos: Array of { file: Blob, url: string, base64: string, mime: string } (최대 3장)
+    - uploadedPhotos: Array of { file: Blob, url: string, base64: string, mime: string, source: 'upload' | 'camera' } (최대 3장)
+    - cameraStream: MediaStream | null (활성 카메라 스트림, 탭 이탈/Step 이동 시 정지)
+    - cameraDevices: MediaDeviceInfo[] (enumerateDevices로 수집된 video input 목록)
+    - cameraDeviceId: string | null (현재 선택된 카메라 device id)
+    - cameraFacing: 'user' | 'environment' (facing mode 토글 상태)
+    - inputMode: 'upload' | 'camera' (Step 2 활성 탭)
     - selectedStyle: object { id: string, name: string, prompt: string, isRealistic?: boolean }
     - customPrompt: string (사용자 직접 입력 프롬프트)
     - baseCharacter: Blob (생성된 베이스 캐릭터 이미지)
@@ -158,13 +186,17 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
 <authentication>
   CRITICAL: 인증 시스템 없음. API 키만 세션 단위로 관리.
 
-  - 첫 접속 시 API 키 입력 화면 표시
+  키 해석 우선순위 (앱 부팅 시):
+  1. sessionStorage에 사용자 override 키가 있으면 그것을 사용 (사용자 직접 입력 또는 "키 변경" 결과)
+  2. 없으면 `window.GOOGLE_API_KEY` (config.js로 주입된 환경변수 기본 키) 사용
+  3. 둘 다 없으면 Step 1 입력 화면 표시
+
+  - 키가 (env 기본 또는 sessionStorage) 존재하면 부팅 시 백그라운드에서 모델 목록 조회로 검증 후 자동으로 Step 2(사진 업로드)로 진입한다. 검증 실패 시 Step 1으로 폴백.
+  - 사용자가 키를 직접 입력하면 검증 후 sessionStorage에 저장 (env 기본 키를 override).
   - 키 유효성 검증: Gemini API 모델 목록 조회(GET /v1beta/models?key=...)로 확인 (generateContent보다 빠름)
-  - 유효하면 sessionStorage에 저장, GoogleGenAI 인스턴스 생성, 다음 단계로 이동
   - 무효하면 인라인 에러 메시지 + 재입력 유도
-  - 탭 종료 시 자동 삭제 (sessionStorage 특성)
-  - 페이지 새로고침 시 sessionStorage에서 키 복원하여 자동 로그인
-  - "키 변경" 버튼으로 언제든 재입력 가능 (헤더에 키 마스킹 표시)
+  - 탭 종료 시 sessionStorage의 사용자 키는 자동 삭제, 다음 세션은 다시 env 기본 키로 시작
+  - "키 변경" 버튼: 헤더에 키 마스킹 표시 + 클릭 시 Step 1로 이동. env 기본 키 사용 중이면 "기본 키 사용 중" 뱃지 표시. 사용자 키로 override 중이면 "되돌리기" 옵션으로 env 기본 키로 복귀 가능 (sessionStorage 값 제거).
 </authentication>
 
 <route_definitions>
@@ -184,7 +216,7 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
   <app>
     <header>                          <!-- 로고 + 키 상태/변경 버튼 (sticky top) -->
       <logo />                        <!-- "Emoticon Maker" 텍스트 로고, 클릭 시 처음으로 -->
-      <key_status />                  <!-- 마스킹된 키 표시 + 변경 버튼 -->
+      <key_status />                  <!-- 마스킹된 키 표시 + 변경 버튼 + env 기본 키 사용 시 "기본 키" 뱃지 -->
     </header>
 
     <step_indicator />                <!-- 7개 원형 스텝, 완료 단계 클릭 가능, CSS 툴팁 -->
@@ -198,8 +230,19 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
 
       <!-- Step 2 -->
       <upload_screen>
-        <drop_zone />                 <!-- 드래그앤드롭 + 파일 선택, 사진 있으면 compact 모드 -->
-        <photo_grid />                <!-- 업로드된 사진 그리드 (최대 3장, 개별 삭제 버튼) -->
+        <input_mode_tabs />           <!-- "파일 업로드" / "카메라 촬영" 2개 탭 -->
+        <drop_zone />                 <!-- [업로드 탭] 드래그앤드롭 + 파일 선택, 사진 있으면 compact 모드 -->
+        <camera_capture>               <!-- [카메라 탭] PC 카메라 라이브 프리뷰 + 캡처 -->
+          <camera_permission_hint />  <!-- 권한 요청 전/거부 시 안내 -->
+          <video_preview />           <!-- <video autoplay playsinline muted> 라이브 스트림 -->
+          <camera_controls>
+            <device_select />          <!-- 멀티 카메라 환경 시 디바이스 선택 (선택사항) -->
+            <facing_toggle />          <!-- user/environment 카메라 전환 (지원 시) -->
+            <capture_button />         <!-- 원형 큰 버튼, 클릭 시 정사각 캡처 -->
+            <stop_camera_button />     <!-- 스트림 정지 -->
+          </camera_controls>
+        </camera_capture>
+        <photo_grid />                <!-- 업로드된 사진 그리드 (최대 3장, 개별 삭제 버튼). 업로드/촬영본 혼합 가능 -->
         <upload_actions />            <!-- "처음부터 다시" + "다음 단계 →" -->
       </upload_screen>
 
@@ -291,39 +334,68 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
   </step_indicator>
 
   <step1_api_key>
+    - 자동 통과 케이스: 앱 부팅 시 sessionStorage 또는 `window.GOOGLE_API_KEY`(env 주입)에 키가 있으면, 본 화면을 렌더링하지 않고 즉시 백그라운드 검증 → Step 2로 진입한다. 검증 실패 시에만 본 화면 노출.
     - 중앙 정렬 카드, padding 48px 32px
     - 타이틀: "Gemini API 키를 입력하세요" (24px, #111111, font-weight 700)
     - 설명: "키는 브라우저에만 임시 저장되며 서버로 전송되지 않습니다" (14px, #888888)
+    - env 기본 키가 존재하는데 사용자가 "키 변경"으로 본 화면에 진입한 경우 상단에 안내 배너: "기본 API 키가 설정되어 있습니다. 비워두고 확인하면 기본 키를 계속 사용합니다." (13px, #555555, background #F5F5F5, border-radius 12px)
     - API 키 발급 링크: "Google AI Studio에서 발급받기 →" (14px, #111111, underline)
     - 입력 필드: type=password, 전체 너비, height 48px, border-radius 12px, border 1.5px solid #E0E0E0
       - focus: border-color #111111, box-shadow 0 0 0 3px rgba(0,0,0,0.05)
       - 우측 토글: 👁 아이콘으로 키 표시/숨기기
       - Enter 키로 제출 가능
+      - placeholder: env 기본 키 사용 중일 때 "기본 키 사용 중 — 변경하려면 입력"
     - 확인 버튼: 전체 너비, height 48px, background #111111, color #FFFFFF, border-radius 12px, font-weight 600
       - hover: background #333333
       - loading: 스피너 아이콘 + "확인 중..."
+      - 입력값이 비어있고 env 기본 키가 존재할 경우: 라벨이 "기본 키로 계속"으로 표시되며, 클릭 시 입력 없이 Step 2로 진입
+    - "기본 키로 되돌리기" 보조 링크: 사용자 override 키를 사용 중이면 표시. 클릭 시 sessionStorage 키 제거 후 env 기본 키로 복귀.
     - 에러 상태: 입력 필드 border-color #EF4444, 하단에 에러 메시지 (13px, #EF4444)
     - 성공: 녹색 체크 아이콘 + "키가 확인되었습니다" → 0.5초 후 자동 전환
     - 키 검증 방식: GET /v1beta/models?key={key} (모델 목록 조회, generateContent보다 빠름)
   </step1_api_key>
 
   <step2_upload>
+    - 입력 모드 탭: 상단에 "📁 파일 업로드" / "📷 카메라 촬영" 2개 탭
+      - 선택된 탭: 텍스트 #111111, 하단 2px solid #111111 underline 인디케이터
+      - 미선택: 텍스트 #888888
+      - 카메라가 사용 불가한 환경(getUserMedia 미지원/HTTPS 아님)에서는 "카메라 촬영" 탭이 disabled + 툴팁 "이 환경에서는 카메라를 사용할 수 없습니다 (HTTPS 필요)"
+      - 탭 전환 시 카메라 탭 → 다른 탭 이동 시 활성 스트림 자동 정지 (track.stop())
+
+    [파일 업로드 탭]
     - 드롭존: 점선 border 2px dashed #D0D0D0, border-radius 20px, 높이 320px
-      - 중앙: 카메라 아이콘 (48px, #CCCCCC) + "사진을 드래그하거나 클릭하세요" (16px, #888888)
+      - 중앙: 폴더/이미지 아이콘 (48px, #CCCCCC) + "사진을 드래그하거나 클릭하세요" (16px, #888888)
       - 하단: "JPG, PNG, WebP / 최대 10MB / 최대 3장" (13px, #BBBBBB)
       - hover: border-color #111111, background rgba(0,0,0,0.02)
       - 드래그 오버: border-color #111111, background rgba(0,0,0,0.04), 'dragover' 클래스
       - 사진 있으면 compact 모드 (높이 축소), MAX 도달 시 hidden
-    - 사진 그리드: 업로드된 사진들을 그리드로 표시 (최대 3장)
-      - 각 사진: 미리보기 이미지 + × 삭제 버튼
+
+    [카메라 촬영 탭]
+    - 권한 미요청 상태: 중앙 카드(border-radius 20px, padding 32px), 카메라 아이콘 (📷, 48px) + "PC 카메라로 직접 촬영" 타이틀 + "카메라 권한을 허용해주세요" 설명 + "카메라 켜기" primary 버튼
+      - 클릭 시 navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }) 호출
+    - 권한 거부 상태: 빨간 ⚠️ 아이콘 + "카메라 권한이 거부되었습니다. 브라우저 설정에서 권한을 허용한 뒤 페이지를 새로고침하세요." 안내 + "다시 시도" 버튼
+    - 권한 허용 상태: 16:9 또는 4:3 비율 video 프리뷰 (max-width 100%, border-radius 16px, background #000)
+      - <video autoplay playsinline muted> + 좌우 반전 미러링 옵션 (CSS transform: scaleX(-1), 셀카 친화)
+      - 우상단 device_select 드롭다운 (디바이스 2개 이상일 때만 표시): enumerateDevices()로 video input 라벨링
+      - facing_toggle 버튼: 모바일/노트북 듀얼 카메라 환경에서 user ↔ environment 전환 (지원 시)
+      - 하단 컨트롤 바: 캡처 카운터 ("0/3 촬영") + 정중앙 capture 버튼 (원형 72px, 흰 border 4px, 클릭 시 셔터 플래시 애니메이션 + 셔터음 옵션) + 우측 "카메라 끄기" ghost 버튼
+      - 캡처 동작: 활성 video frame을 OffscreenCanvas로 그려 정사각형(min(videoWidth, videoHeight)) 중앙 크롭 → image/jpeg 0.92 Blob → photo_grid에 즉시 추가 + IndexedDB 저장
+      - 미러링이 적용된 프리뷰여도 최종 캡처는 원본 좌우 방향으로 저장 (AI 입력 일관성)
+      - 3장 도달 시 capture 버튼 disabled + "최대 3장 도달" 텍스트
+    - 카메라 스트림 라이프사이클:
+      - 탭 이탈, "카메라 끄기" 클릭, Step 이동, 페이지 unload(beforeunload) 시 항상 track.stop() 호출
+      - 다른 앱에서 카메라 점유 등으로 스트림이 끊기면 권한 미요청 상태로 복귀 + info 토스트
+
+    - 사진 그리드: 업로드된 사진들을 그리드로 표시 (최대 3장, 업로드본/촬영본 혼합)
+      - 각 사진: 미리보기 이미지 + × 삭제 버튼 + 좌상단 source 뱃지 (📁 또는 📷)
       - 개별 삭제 가능
     - 하단 버튼 2개: "처음부터 다시" (ghost) + "다음 단계 →" (primary)
-    - 파일 검증:
-      - 허용 형식: image/jpeg, image/png, image/webp
+    - 파일/캡처 공통 검증:
+      - 허용 형식: image/jpeg, image/png, image/webp (캡처본은 항상 image/jpeg)
       - 최대 크기: 10MB
-      - 최대 장수: 3장 (초과 시 info 토스트)
+      - 최대 장수: 3장 합산 (업로드 + 캡처, 초과 시 info 토스트)
       - 실패 시 토스트 에러 메시지
-    - 각 사진은 IndexedDB에 즉시 저장 (uploadedPhoto_0 ~ uploadedPhoto_2)
+    - 각 사진은 IndexedDB에 즉시 저장 (uploadedPhoto_0 ~ uploadedPhoto_2, source 필드 포함)
   </step2_upload>
 
   <step3_style>
@@ -466,6 +538,44 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
     - 기타 에러: 400(안전 필터) → 필터 차단 안내, 500(서버 오류) → 서버 오류 안내, 네트워크 에러 → 인터넷 확인 안내
   </gemini_api_integration>
 
+  <camera_capture>
+    CRITICAL: PC 카메라 직접 촬영은 사진 업로드 단계의 보조 입력 경로다. 파일 업로드와 동일한 최대 3장 제한을 공유한다.
+
+    스트림 시작:
+    - `navigator.mediaDevices.getUserMedia({ video: constraints, audio: false })`로 권한 요청
+    - constraints 기본값: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+    - 사용자가 device_select로 특정 카메라 선택 시: { deviceId: { exact: id }, ... }
+    - facing_toggle 클릭 시: facingMode 값을 user ↔ environment로 토글 후 스트림 재시작
+    - 권한 상태: navigator.permissions.query({ name: 'camera' })로 사전 확인 가능 (지원 환경 한정)
+
+    디바이스 목록 갱신:
+    - 권한 부여 후 navigator.mediaDevices.enumerateDevices()로 video input 라벨 수집
+    - devicechange 이벤트 리스너로 핫플러그 대응
+
+    캡처:
+    - capture 버튼 클릭 → 활성 video element의 currentFrame을 OffscreenCanvas로 그림
+    - 정사각 중앙 크롭: side = min(videoWidth, videoHeight), offset 계산 후 drawImage
+    - canvas.convertToBlob({ type: 'image/jpeg', quality: 0.92 })로 Blob 생성
+    - 캡처본을 uploadedPhotos에 source='camera'로 추가, IndexedDB(uploadedPhoto_N)에 즉시 저장
+    - 셔터 플래시: video 위에 흰색 오버레이 80ms fade in/out
+
+    스트림 정지 (의무):
+    - 다음 시점에서 항상 stream.getTracks().forEach(t => t.stop()) 호출:
+      1) 탭 전환(파일 업로드 ↔ 카메라)
+      2) "카메라 끄기" 클릭
+      3) Step 2 → Step 3 진행
+      4) 헤더 로고 클릭 / "처음부터 다시"
+      5) beforeunload / visibilitychange(hidden) 이벤트
+    - state.cameraStream을 null로 설정
+
+    에러/엣지 케이스:
+    - NotAllowedError(권한 거부): 인라인 안내 + "다시 시도" 버튼
+    - NotFoundError(카메라 없음): "사용 가능한 카메라가 없습니다" 토스트
+    - NotReadableError(다른 앱이 점유): "카메라가 다른 앱에서 사용 중입니다" 토스트
+    - OverconstrainedError(요청 제약 미충족): facingMode 제거 후 재시도
+    - HTTPS/localhost가 아닌 환경: getUserMedia 호출 자체 차단 → 탭 disabled 처리
+  </camera_capture>
+
   <base_character_generation>
     - 사용자 사진(최대 3장) + 선택된 스타일 프롬프트를 조합
     - Gemini에 사진을 인라인 데이터로 전달: parts에 [text prompt, ...inlineData photos]
@@ -606,7 +716,11 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
     - gtag.js 비동기 로드 (index.html head)
     - trackEvent 함수로 이벤트 전송:
       - step_view: 각 단계 진입 시 (step_name, step_index)
+      - api_key_source: 부팅 시 활성 키 출처 (env | user)
+      - photo_added: 사진 추가 시 source 파라미터 ('upload' | 'camera')
+      - camera_permission: 'granted' | 'denied' | 'unsupported'
       - 기타 사용자 인터랙션 추적
+    - CRITICAL: 어떤 이벤트에도 API 키 값을 포함하지 않는다.
   </analytics>
 </core_functionality>
 
@@ -622,9 +736,14 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
     </toast_notifications>
     <inline_errors>
       - API 키 무효: "유효하지 않은 API 키입니다. 다시 확인해주세요."
+      - env 기본 키 검증 실패: "기본 API 키가 유효하지 않습니다. 직접 키를 입력해주세요." (자동으로 Step 1 표시)
       - 파일 형식 오류: "JPG, PNG, WebP 파일만 업로드할 수 있습니다."
       - 파일 크기 초과: "파일 크기가 10MB를 초과합니다."
-      - 사진 수 초과: "사진은 최대 3장까지 업로드할 수 있습니다."
+      - 사진 수 초과: "사진은 최대 3장까지 업로드할 수 있습니다." (업로드 + 캡처 합산)
+      - 카메라 권한 거부: "카메라 권한이 거부되었습니다. 브라우저 설정에서 허용해주세요."
+      - 카메라 없음: "사용 가능한 카메라를 찾을 수 없습니다."
+      - 카메라 점유: "카메라가 다른 앱에서 사용 중입니다. 해당 앱을 종료한 뒤 다시 시도해주세요."
+      - 카메라 미지원 환경: "이 브라우저/환경에서는 카메라를 사용할 수 없습니다 (HTTPS 필요)."
       - 이미지 생성 실패: "AI가 이미지를 생성하지 못했습니다. 다른 사진이나 스타일을 시도해주세요."
       - 네트워크 오류: "인터넷 연결을 확인해주세요."
     </inline_errors>
@@ -839,7 +958,7 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
 
   <icons>
     - 시스템 이모지 사용 (외부 아이콘 라이브러리 없음)
-    - 카메라: 📷, 다운로드: 📦, 재생성: 🔄, 체크: ✓, 에러: ✕
+    - 파일 업로드: 📁, 카메라: 📷, 다운로드: 📦, 재생성: 🔄, 체크: ✓, 에러: ✕, 권한 경고: ⚠️
     - 스타일 프리셋: 🎨🌸✏️🧸🎌📸
     - AI 추천: ✨, 편집: ✏️, 시트 재생성: ↻
   </icons>
@@ -856,12 +975,16 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
 
 <security_considerations>
   <api_key_handling>
-    - CRITICAL: API 키는 sessionStorage에만 저장. localStorage 사용 금지.
-    - CRITICAL: API 키를 DOM에 노출하지 않는다 (data 속성, hidden input 등 금지)
-    - CRITICAL: API 키를 URL 파라미터, 쿠키, 로그에 포함하지 않는다
+    - CRITICAL: 사용자가 직접 입력한 API 키는 sessionStorage에만 저장. localStorage 사용 금지.
+    - CRITICAL: API 키를 DOM에 노출하지 않는다 (data 속성, hidden input 등 금지). 키 마스킹 표시("AIza...7gJ")만 노출.
+    - CRITICAL: API 키를 URL 파라미터, 쿠키, 로그, GA 이벤트 파라미터에 포함하지 않는다.
     - 키 입력 필드: type="password" 기본, 토글로 표시 가능
-    - 키 마스킹 표시: "AIza...7gJ" (앞 4자 + ... + 뒤 3자)
-    - 탭/브라우저 종료 시 자동 삭제 (sessionStorage 특성)
+    - 탭/브라우저 종료 시 sessionStorage의 사용자 키 자동 삭제 (sessionStorage 특성)
+    - env 기본 키 (window.GOOGLE_API_KEY):
+      - CRITICAL: `config.js`는 .gitignore로 git 추적 제외. 절대 커밋 금지. PR/스크린샷에도 노출 금지.
+      - CRITICAL: 정적 사이트에 주입되므로 결과적으로 사이트 방문자에게 노출된다. 따라서 사용량 제한(분당/일일 쿼터)과 referrer/도메인 제한이 걸린 키만 사용한다.
+      - GA 이벤트나 콘솔 로그에 키 값을 출력하지 않는다 (apiKeySource 식별자만 기록).
+      - config.js는 .gitignore 외에도 GitHub Pages 배포 워크플로에서 GOOGLE_API_KEY secret을 사용해 생성하도록 권장 (워크플로 로그에 키 echo 금지).
   </api_key_handling>
   <client_security>
     - CRITICAL: 모든 API 호출은 브라우저에서 직접. 프록시 서버 없음.
@@ -870,9 +993,12 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
     - XSS 방지: 사용자 입력(캐릭터 이름, 커스텀 프롬프트)을 textContent로만 삽입
   </client_security>
   <data_privacy>
-    - 사용자 사진은 브라우저 밖으로 나가지 않음 (Gemini API 호출 시에만 전송)
+    - 사용자 사진(업로드본 + 카메라 캡처본)은 브라우저 밖으로 나가지 않음 (Gemini API 호출 시에만 전송)
+    - 카메라 스트림: 미디어 트랙은 로컬 video element에만 바인딩, 외부 전송 없음. 캡처된 프레임만 IndexedDB에 저장.
+    - 카메라 사용은 사용자의 명시적 "카메라 켜기" 클릭으로만 시작 (자동 시작 금지)
+    - 카메라 스트림은 즉시 정지(track.stop) — 백그라운드 상시 동작 금지
     - 생성된 이미지는 IndexedDB에만 저장, 서버 업로드 없음
-    - Google Analytics로 사용자 행동 이벤트 추적 (개인정보 미포함)
+    - Google Analytics로 사용자 행동 이벤트 추적 (개인정보 미포함). 카메라 사용 여부는 source 통계로만 기록 (예: photo_added with source='camera').
   </data_privacy>
 </security_considerations>
 
@@ -918,8 +1044,8 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
 </advanced_functionality>
 
 <final_integration_test>
-  <scenario name="정상 흐름 E2E">
-    1. index.html 접속 → API 키 입력 화면 표시
+  <scenario name="정상 흐름 E2E (사용자 키 입력)">
+    1. index.html 접속 (env 기본 키 없음) → API 키 입력 화면 표시
     2. 유효한 Gemini API 키 입력 → 모델 목록 조회로 검증 → "확인됨" 표시 → 사진 업로드 화면 전환
     3. 인물/동물 사진 드래그앤드롭 (최대 3장) → 그리드 미리보기 표시
     4. "지브리풍" 스타일 선택 → "캐릭터 만들기" 클릭
@@ -963,6 +1089,32 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
     3. AI가 자동으로 동물 종 인식하여 동일 종 캐릭터 생성
     4. 24개 이모티콘도 해당 동물 캐릭터로 일관성 유지
   </scenario>
+
+  <scenario name="env 기본 키 자동 통과">
+    1. 배포 환경에서 GOOGLE_API_KEY env가 주입된 `config.js` 존재
+    2. index.html 접속 → 백그라운드에서 window.GOOGLE_API_KEY 검증 → 통과 시 Step 1 화면 생략
+    3. 곧바로 Step 2(사진 업로드) 화면 표시, 헤더에 "기본 키" 뱃지 + 마스킹 표시
+    4. "키 변경" 클릭 → Step 1 진입, 빈 값 + "기본 키로 계속" 버튼 / 또는 새 키 입력
+    5. 새 키 입력 시 sessionStorage에 저장되어 env 기본 키를 override, 다음 부팅까지 유지
+    6. "기본 키로 되돌리기" 클릭 시 sessionStorage 비우고 env 기본 키로 복귀
+  </scenario>
+
+  <scenario name="PC 카메라로 직접 촬영">
+    1. Step 2에서 "📷 카메라 촬영" 탭 클릭
+    2. "카메라 켜기" 클릭 → 브라우저 권한 다이얼로그 허용
+    3. 라이브 video 프리뷰 표시 + 캡처 카운터 "0/3"
+    4. capture 버튼 클릭 → 셔터 플래시 → 정사각 캡처본이 photo_grid에 추가됨 (📷 뱃지)
+    5. 추가로 1~2장 더 촬영, 또는 파일 업로드 탭으로 전환해 혼합 사용
+    6. "다음 단계 →" 클릭 시 카메라 스트림 자동 정지(track.stop)
+    7. 이후 흐름은 정상 E2E와 동일 (스타일 선택 → 베이스 캐릭터 → ...)
+  </scenario>
+
+  <scenario name="카메라 권한 거부 / 환경 미지원">
+    1. Step 2 카메라 탭 → "카메라 켜기" → 권한 거부
+    2. 인라인 안내 + "다시 시도" 버튼, 사용자가 브라우저 설정에서 권한 허용 후 재시도 가능
+    3. HTTPS가 아닌 file:// 또는 http:// (localhost 제외) 환경에서는 카메라 탭이 disabled, 툴팁으로 안내
+    4. 파일 업로드 탭은 영향 없이 정상 동작 (기존 경로 유지)
+  </scenario>
 </final_integration_test>
 
 <success_criteria>
@@ -970,45 +1122,55 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
   - 모든 이모티콘 360x360px PNG 투명 배경
   - ZIP 다운로드 파일에 25개 파일 (main.png + 01~24.png)
   - 모바일 Safari/Chrome에서 정상 동작
-  - API 키가 sessionStorage 외부로 유출되지 않음
+  - 사용자 입력 API 키가 sessionStorage 외부로 유출되지 않음
+  - env 기본 키(`window.GOOGLE_API_KEY`)가 존재하면 Step 1 자동 통과, 사용자는 헤더에서 자기 키로 override/되돌리기 가능
+  - `config.js`가 .gitignore에 포함되어 환경변수 키가 저장소에 커밋되지 않음
   - 사람 및 동물(고양이, 강아지 등) 사진 모두 지원
+  - PC 카메라(getUserMedia)로 직접 촬영한 정사각 캡처본을 파일 업로드와 혼합해 최대 3장 사용 가능
+  - 카메라 스트림이 Step 이동/탭 전환/페이지 unload 시 항상 정지됨 (백그라운드 잔류 0건)
   - 시트 부분 실패 시 개별 재생성 가능
   - 페이지 새로고침 시 완성된 세트 복원
 </success_criteria>
 
 <build_output>
   <files>
-    - index.html (HTML 구조 + Tailwind 설정 + 메타 태그)
-    - style.css (커스텀 CSS 스타일)
-    - app.js (전체 앱 로직)
-    - README.md (프로젝트 설명)
+    - index.html (HTML 구조 + Tailwind 설정 + 메타 태그 + config.js 스크립트 태그)
+    - style.css (커스텀 CSS 스타일 + 카메라 UI)
+    - app.js (전체 앱 로직 + 카메라 캡처)
+    - config.js (선택, gitignored — `window.GOOGLE_API_KEY` 주입)
+    - config.example.js (커밋용 템플릿)
+    - .gitignore (config.js 제외 규칙 포함)
+    - README.md (프로젝트 설명 + 환경변수 셋업 안내)
     - LICENSE (Apache 2.0 + Commons Clause)
   </files>
   <deployment>
     - GitHub Pages에 직접 배포 (main 브랜치 루트)
-    - 빌드 단계 없음
+    - 빌드 단계 없음 (단, GOOGLE_API_KEY를 GitHub Actions secret으로 관리하는 경우 배포 워크플로에서 config.js를 환경변수로부터 동적 생성)
     - CDN 의존성: esm.sh (@google/genai), cdnjs (JSZip, FileSaver), cdn.tailwindcss.com (Tailwind), cdn.jsdelivr.net (Pretendard)
+    - 카메라 기능 사용을 위해 GitHub Pages(HTTPS) 또는 localhost로 접근 필요
   </deployment>
 </build_output>
 
 <key_implementation_notes>
   <implementation_order>
-    1. HTML 기본 구조 (index.html) + Tailwind CSS 설정 + 메타 태그/SEO
-    2. 커스텀 CSS (style.css) — 디자인 시스템 (색상, 타이포, 컴포넌트)
-    3. 스텝 위자드 네비게이션 (7단계, 클릭 가능한 스텝 인디케이터)
-    4. API 키 입력 + 모델 목록 조회로 검증 (sessionStorage)
-    5. 사진 업로드 (드래그앤드롭 + 파일 선택 + 최대 3장 + 그리드 미리보기)
-    6. 스타일 선택 UI (탭 기반: 프리셋 6종 + AI 추천 + 직접 입력)
-    7. Gemini API 연동 — 베이스 캐릭터 생성 (자동 재시도, 동물 지원)
-    8. 베이스 리뷰 화면 (확정/재생성/스타일변경)
-    9. 이모티콘 구성 생성 — Gemini로 24개 감정/상황 목록 동적 생성 + 인라인 편집 UI
-    10. 이모티콘 시트 병렬 배치 생성 + OffscreenCanvas 분할 + 흰→투명 변환
-    11. 프로그레스 UI (원형 SVG + 시트 썸네일 스트립 + 시트 모달)
-    12. 완성 화면 (그리드 + 모달 + ZIP 다운로드)
-    13. IndexedDB 캐싱 + 새로고침 복원
-    14. 반응형 모바일 대응
-    15. 에러 핸들링 + 토스트
-    16. Google Analytics 이벤트 추적
+    1. HTML 기본 구조 (index.html) + Tailwind CSS 설정 + 메타 태그/SEO + config.js 스크립트 태그(앞단 로드)
+    2. 커스텀 CSS (style.css) — 디자인 시스템 (색상, 타이포, 컴포넌트) + 카메라 캡처 UI 스타일
+    3. config.js 메커니즘: config.example.js 작성, .gitignore 등록, 부팅 시 window.GOOGLE_API_KEY 읽기
+    4. 스텝 위자드 네비게이션 (7단계, 클릭 가능한 스텝 인디케이터)
+    5. API 키 부팅 흐름: sessionStorage 우선 → window.GOOGLE_API_KEY 폴백 → 둘 다 없으면 Step 1 입력, 모델 목록 조회로 검증
+    6. 사진 업로드 — 파일 업로드/카메라 촬영 2탭, 최대 3장 합산, 그리드 미리보기
+    7. 카메라 캡처: getUserMedia 권한 흐름, 라이브 프리뷰, 정사각 중앙 크롭 캡처, 스트림 라이프사이클 관리
+    8. 스타일 선택 UI (탭 기반: 프리셋 6종 + AI 추천 + 직접 입력)
+    9. Gemini API 연동 — 베이스 캐릭터 생성 (자동 재시도, 동물 지원)
+    10. 베이스 리뷰 화면 (확정/재생성/스타일변경)
+    11. 이모티콘 구성 생성 — Gemini로 24개 감정/상황 목록 동적 생성 + 인라인 편집 UI
+    12. 이모티콘 시트 병렬 배치 생성 + OffscreenCanvas 분할 + 흰→투명 변환
+    13. 프로그레스 UI (원형 SVG + 시트 썸네일 스트립 + 시트 모달)
+    14. 완성 화면 (그리드 + 모달 + ZIP 다운로드)
+    15. IndexedDB 캐싱 + 새로고침 복원
+    16. 반응형 모바일 대응
+    17. 에러 핸들링 + 토스트 (카메라 권한/디바이스 오류 포함)
+    18. Google Analytics 이벤트 추적 (photo_added의 source 구분 포함)
   </implementation_order>
 
   <critical_paths>
@@ -1017,6 +1179,9 @@ CRITICAL: 백엔드 서버가 없다. 모든 API 호출은 브라우저에서 �
     - 병렬 배치 생성: Promise.allSettled로 부분 실패 허용 + 공유 카운터로 진행률 관리.
     - 동적 SDK 로드: import('https://esm.sh/@google/genai')로 file:// 프로토콜 지원.
     - 동물/사람 범용 프롬프트: subject 자동 인식 + 동일 종 유지가 캐릭터 일관성의 핵심.
+    - API 키 부팅 우선순위: sessionStorage(user) → window.GOOGLE_API_KEY(env, config.js) 순. 둘 다 실패 시에만 Step 1 표시.
+    - 카메라 스트림 라이프사이클: 모든 이탈 지점(탭 전환, Step 진행, beforeunload, visibilitychange)에서 track.stop() 보장 — 누락 시 캠 LED가 켜진 채로 잔류한다.
+    - 카메라 캡처 좌우 반전: 프리뷰는 미러링(scaleX(-1))이지만 캡처본은 원본 방향으로 저장 — drawImage 시 transform 미적용에 주의.
   </critical_paths>
 
   <gemini_api_usage_pattern>
